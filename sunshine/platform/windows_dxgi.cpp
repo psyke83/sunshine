@@ -356,9 +356,17 @@ public:
       img->width = width;
       img->height = height;
       img->row_pitch = img_info.RowPitch;
-    }
 
-    std::copy_n((std::uint8_t*)img_info.pData, height * img_info.RowPitch, (std::uint8_t*)img->data);
+      std::copy_n((std::uint8_t*)img_info.pData, height * img_info.RowPitch, (std::uint8_t*)img->data);
+    }
+    else {
+      auto pos = (std::uint8_t*)img_info.pData;
+      std::for_each(img->data, img->data + (height * img_info.RowPitch), [&](auto &pixel) {
+        int ipixel = pixel;
+	int ipos = *pos++;
+        pixel = (std::uint8_t)((ipixel + ipos) / 2);
+      });
+    }
 
     if(cursor_visible && cursor.visible) {
       blend_cursor(cursor, *img);
