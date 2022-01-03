@@ -62,6 +62,7 @@ struct cursor_t {
   std::vector<std::uint8_t> img_data;
 
   DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info;
+  RECT rect;
   int x, y;
   bool visible;
 };
@@ -87,6 +88,7 @@ public:
   shader_res_t input_res;
 
   D3D11_VIEWPORT cursor_view;
+  RECT rect;
 
   bool visible;
 };

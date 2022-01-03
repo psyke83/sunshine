@@ -241,8 +241,41 @@ capture_e display_ram_t::snapshot(::platf::img_t *img_base, std::chrono::millise
         return capture_e::error;
       }
 
-      //Copy from GPU to CPU
-      device_ctx->CopyResource(texture.get(), src.get());
+      // get move rects
+      UINT metabuffer_size = frame_info.TotalMetadataBufferSize;
+      DXGI_OUTDUPL_MOVE_RECT move_rects[metabuffer_size / sizeof(DXGI_OUTDUPL_MOVE_RECT)];
+      dup.dup->GetFrameMoveRects(metabuffer_size, reinterpret_cast<DXGI_OUTDUPL_MOVE_RECT*>(move_rects), &metabuffer_size);
+      int move_count = metabuffer_size / sizeof(DXGI_OUTDUPL_MOVE_RECT);
+
+      // todo: process move rects correctly
+      if(move_count > 0) {
+        BOOST_LOG(error) << "move_count: " << move_count << ", metabuffer_size: " << metabuffer_size;
+
+        // copy full frame
+        device_ctx->CopyResource(texture.get(), src.get());
+      } else {
+        // allocate dirty rects + cursor rect
+        metabuffer_size = frame_info.TotalMetadataBufferSize - metabuffer_size;
+        RECT dirty_rects[(metabuffer_size / sizeof(RECT)) + 1];
+
+        // get dirty rects
+        dup.dup->GetFrameDirtyRects(metabuffer_size, reinterpret_cast<RECT*>(dirty_rects), &metabuffer_size);
+        int dirty_count = (metabuffer_size / sizeof(RECT)) + 1;
+
+        // add last known cursor rect to dirty rects
+        dirty_rects[dirty_count-1] = cursor.rect;
+
+        // process dirty rects
+        for(int i = 0; i < dirty_count; i++) {
+          RECT * dirty_rect = dirty_rects + i;
+          D3D11_BOX dirty_box = {
+            .left = (UINT)dirty_rect->left, .top = (UINT)dirty_rect->top, .front = 0, .right = (UINT)dirty_rect->right,
+            .bottom = (UINT)dirty_rect->bottom, .back = 1,
+          };
+          //BOOST_LOG(error) << i << "/" << dirty_count - 1 << ": l=" << dirty_box.left << ", t=" << dirty_box.top << ", r=" << dirty_box.right << ", b=" << dirty_box.bottom;
+          device_ctx->CopySubresourceRegion(texture.get(), 0, dirty_box.left, dirty_box.top, 0, src.get(), 0, &dirty_box);
+        }
+      }
     }
 
     if(img_info.pData) {
@@ -272,6 +305,14 @@ capture_e display_ram_t::snapshot(::platf::img_t *img_base, std::chrono::millise
 
   if(cursor_visible && cursor.visible) {
     blend_cursor(cursor, *img);
+
+    // update cursor rect for next frame
+    cursor.rect = {
+      (LONG)cursor.x, \
+      (LONG)cursor.y, \
+      (LONG)cursor.x + (LONG)cursor.shape_info.Width, \
+      (LONG)cursor.y + (LONG)cursor.shape_info.Height
+    };
   }
 
   return capture_e::ok;

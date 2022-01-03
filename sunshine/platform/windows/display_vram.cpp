@@ -686,7 +686,42 @@ capture_e display_vram_t::snapshot(platf::img_t *img_base, std::chrono::millisec
     }
   }
 
-  device_ctx->CopyResource(img->texture.get(), src.get());
+  // get move rects
+  UINT metabuffer_size = frame_info.TotalMetadataBufferSize;
+  DXGI_OUTDUPL_MOVE_RECT move_rects[metabuffer_size / sizeof(DXGI_OUTDUPL_MOVE_RECT)];
+  dup.dup->GetFrameMoveRects(metabuffer_size, reinterpret_cast<DXGI_OUTDUPL_MOVE_RECT*>(move_rects), &metabuffer_size);
+  int move_count = metabuffer_size / sizeof(DXGI_OUTDUPL_MOVE_RECT);
+
+  // todo: process move rects correctly
+  if(move_count > 0) {
+    BOOST_LOG(error) << "move_count: " << move_count << ", metabuffer_size: " << metabuffer_size;
+
+    // copy full frame
+    device_ctx->CopyResource(img->texture.get(), src.get());
+  } else {
+    // allocate dirty rects + cursor rect
+    metabuffer_size = frame_info.TotalMetadataBufferSize - metabuffer_size;
+    RECT dirty_rects[(metabuffer_size / sizeof(RECT)) + 1];
+
+    // get dirty rects
+    dup.dup->GetFrameDirtyRects(metabuffer_size, reinterpret_cast<RECT*>(dirty_rects), &metabuffer_size);
+    int dirty_count = (metabuffer_size / sizeof(RECT)) + 1;
+
+    // add last known cursor rect to dirty rects
+    dirty_rects[dirty_count-1] = cursor.rect;
+
+    // process dirty rects
+    for(int i = 0; i < dirty_count; i++) {
+      RECT * dirty_rect = dirty_rects + i;
+      D3D11_BOX dirtyBox = {
+        .left = (UINT)dirty_rect->left, .top = (UINT)dirty_rect->top, .front = 0, .right = (UINT)dirty_rect->right,
+        .bottom = (UINT)dirty_rect->bottom, .back = 1,
+      };
+      //BOOST_LOG(error) << i << "/" << dirty_count - 1 << ": l=" << dirtyBox.left << ", t=" << dirtyBox.top << ", r=" << dirtyBox.right << ", b=" << dirtyBox.bottom;
+      device_ctx->CopySubresourceRegion(img->texture.get(), 0, dirtyBox.left, dirtyBox.top, 0, src.get(), 0, &dirtyBox);
+    }
+  }
+
   if(cursor.visible) {
     D3D11_VIEWPORT view {
       0.0f, 0.0f,
@@ -703,6 +738,14 @@ capture_e display_vram_t::snapshot(platf::img_t *img_base, std::chrono::millisec
     device_ctx->RSSetViewports(1, &cursor.cursor_view);
     device_ctx->Draw(3, 0);
     device_ctx->OMSetBlendState(blend_disable.get(), nullptr, 0xFFFFFFFFu);
+
+    // update cursor rect for next frame
+    cursor.rect = {
+      (LONG)cursor.cursor_view.TopLeftX, \
+      (LONG)cursor.cursor_view.TopLeftY, \
+      (LONG)cursor.cursor_view.TopLeftX + (LONG)cursor.cursor_view.Width, \
+      (LONG)cursor.cursor_view.TopLeftY + (LONG)cursor.cursor_view.Height
+    };
   }
 
   return capture_e::ok;
